@@ -1,0 +1,25 @@
+[workspace]
+name = "destine-fdb"
+channels = ["conda-forge"]
+platforms = ["linux-64", "osx-arm64"]
+
+[tasks]
+test = "pytest -q"
+scan = "python -m destine_fdb.cli scan"
+
+[dependencies]
+python = ">=3.11,<3.13"
+earthkit-data = ">=0.20"
+xarray = "*"
+dask = "*"
+pandas = "*"
+numpy = "*"
+eccodes = "*"
+findlibs = "*"
+pytest = "*"
+
+[pypi-dependencies]
+# pyfdb is PyPI-only and uses findlibs to locate libfdb5.so at runtime. Set
+# FDB5_DIR/LD_LIBRARY_PATH so it finds your climateDT build.
+pyfdb = "*"
+destine-fdb = { path = ".", editable = true }

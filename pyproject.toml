@@ -1,0 +1,38 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "destine-fdb"
+version = "0.1.0"
+description = "Lazy xarray access to DestinE Climate DT data held in a local FDB"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [{ name = "Sebastian Beyer", email = "sebastian.beyer@awi.de" }]
+dependencies = [
+    "numpy",
+    "pandas",
+    "xarray",
+    "dask",
+    "earthkit-data>=0.20",
+    "pyfdb",
+]
+
+[project.optional-dependencies]
+# healpy adds per-cell lat/lon via open_run(add_latlon=True).
+healpix = ["healpy"]
+# What examples/quickstart.ipynb needs to plot.
+plot = ["healpy", "matplotlib", "cartopy", "easygems"]
+# xdggs decodes the grid metadata into a DGGS index.
+dggs = ["xdggs"]
+test = ["pytest"]
+
+[project.scripts]
+destine-fdb = "destine_fdb.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/destine_fdb"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
