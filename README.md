@@ -18,6 +18,36 @@ Opening is instant: the dataset knows its shape, variables and time axis, but
 holds no data. Each `.compute()` / `.values` / `.plot()` turns into the FDB
 reads it needs and no more.
 
+## Quickstart
+
+On the HPC, once:
+
+```bash
+# login nodes have no internet, so push the code rather than cloning it
+rsync -a --exclude='.pixi' --exclude='.git' ./ mn5:destine-fdb/
+ssh mn5 'cd destine-fdb && pixi install -e explore'
+```
+
+(If the login node cannot reach conda-forge, run a CONNECT proxy on your laptop,
+open it with `ssh -R 18081:localhost:18081 mn5`, and set
+`https_proxy=http://localhost:18081` before `pixi install`.)
+
+Then, per session — launch on a compute node, connect from the laptop:
+
+```bash
+ssh mn5 'export FDB5_DIR=/path/to/climateDT/build_intel; \
+         cd destine-fdb && sbatch tools/jupyter.slurm'
+
+./tools/connect.sh --open        # finds the job, opens the tunnel, opens the URL
+```
+
+That is the whole loop. `scancel <jobid>` when you are done; Ctrl-C in
+`connect.sh` only closes the tunnel. Details, and the VSCode variants, are in
+[Notebooks](#notebooks-vscode-against-an-hpc) below.
+
+For local use against a copied FDB, `pixi install` (or `pip install -e .`) and
+skip all of the above.
+
 ## Why?
 
 The data bridge only carries published runs. Anything still in flight — a
@@ -63,6 +93,106 @@ differs between pyfdb versions -- 5.21 takes `level=` and returns elements with
 `.combined_key()`, older builds take `depth=`/`keys=` and return dicts -- and
 this package handles both, because the version you get is pinned by the model
 build on your machine, not by PyPI.
+
+## Notebooks (VSCode against an HPC)
+
+The `explore` environment adds jupyterlab, cartopy, healpy, easygems and xdggs
+on top of the reader:
+
+```bash
+pixi install -e explore
+```
+
+There are two ways to get a notebook running against it, and one trap.
+
+**The trap:** do not point VSCode at `.pixi/envs/explore/bin/python`. VSCode
+discovers that interpreter and execs `ipykernel_launcher` itself, which skips
+pixi activation entirely — so the kernel has no `FDB5_DIR` and no
+`LD_LIBRARY_PATH`, `findlibs` cannot locate `libfdb5.so`, and every `open_run`
+dies at import. Setting them inside the notebook does not rescue it either:
+`LD_LIBRARY_PATH` is read by the dynamic loader when the process starts.
+
+**Kernel via `pixi run`.** Register a kernelspec that does the activation
+itself, from a shell where `FDB5_DIR` is already exported:
+
+```bash
+pixi run -e explore kernel
+pixi run -e explore kernel --fdb5-dir /path/to/climateDT/build_intel
+pixi run -e explore kernel --module intel     # if libfdb5's deps need the toolchain
+```
+
+This writes `~/.local/share/jupyter/kernels/destine-fdb/{launch.sh,kernel.json}`.
+The launcher does the module loads, exports `FDB5_DIR` and prepends to
+`LD_LIBRARY_PATH` (rather than replacing it — libfdb5 needs its eckit/metkit
+siblings), then `exec`s `pixi run -e explore python -m ipykernel_launcher`.
+Pick **"destine-fdb (pixi)"** as the kernel in VSCode. `--dry-run` prints both
+files without writing them; `--no-fdb-env` gives a plain kernel for
+zarr/netCDF-only work.
+
+**Or run the server on a compute node.** Prefer this for anything heavy:
+login nodes on MN5 kill processes over the CPU/memory limits, and a dask read
+of an H512 run will trip that. A server started this way inherits the activated
+environment by construction, so no kernelspec is involved.
+
+`tools/jupyter.slurm` is a batch job that does it:
+
+```bash
+export FDB5_DIR=/path/to/climateDT/build_intel   # inherited by the job
+sbatch tools/jupyter.slurm                       # submit from the repo root
+tail -f jupyter-<jobid>.log
+```
+
+The log prints the node, a free port, and the exact command to paste:
+
+```
+ JupyterLab on gs01r2b23:49286   (job 1234567, 16 cores)
+
+     ssh -N -L 49286:gs01r2b23:49286 mn5
+```
+
+Same port on both ends, so the `http://127.0.0.1:49286/lab?token=...` URL that
+Jupyter prints just below works verbatim — in a browser, or pasted into VSCode
+under *Select Kernel → Existing Jupyter Server* (it wants the whole URL,
+token included). The login node can reach the compute node directly, so one
+`-L` hop is enough; no nested tunnel.
+
+The forward is a laptop-side thing, so it has to be (re)opened per session, and
+both halves change with every job. `tools/connect.sh` does the lookup for you —
+it runs **on the laptop**, asks `squeue` for your running job, reads node, port
+and token out of its log, opens the tunnel and prints the URL:
+
+```bash
+./tools/connect.sh                     # tunnel + URL, Ctrl-C to close
+./tools/connect.sh --open              # and open it in a browser
+./tools/connect.sh --local-port 8899   # if the remote port is taken here
+```
+
+`MN5_HOST`, `REMOTE_DIR` and `JOB_NAME` override the ssh alias, the remote
+checkout and the job name. If you already have a session open on the login
+node, `~C` followed by `-L <port>:<node>:<port>` adds the forward to it instead
+(needs `EnableEscapeCommandline yes`; OpenSSH disables that escape by default
+since 8.9). In a VSCode Remote-SSH window, the Ports panel → *Forward a Port* →
+`<node>:<port>` is the same thing again — VSCode's auto-detection will not find
+it on its own, because it only watches the login node's own ports.
+
+Edit the `--account` / `--qos` headers for your project (`sacctmgr show assoc
+user=$USER` lists what you may use; `gp_debug` caps at 2 hours). Modules for
+libfdb5's dependencies go in via
+`sbatch --export=ALL,JUPYTER_MODULES="intel" tools/jupyter.slurm`.
+
+MN5 `gpp` nodes are shared (`OverSubscribe=OK`), so the 16 cores in the header
+cost 16 cores, not the 112-core node — no reason to grab the whole thing. What
+`--cpus-per-task` really controls is memory: MN5 hands out 2000 MB per
+allocated CPU, so 16 lands at ~32 GB. Raise it (or add `--mem`) before a large
+H512 read, not because the notebook needs the threads.
+
+For a quick look, `salloc` plus `pixi run -e explore lab` does the same thing
+by hand.
+
+**Getting VSCode onto an airgapped login node.** Remote-SSH normally downloads
+`vscode-server` on the remote, which has no internet. Set
+`"remote.SSH.localServerDownload": "always"` locally — your laptop fetches the
+tarball and pipes it over the SSH connection.
 
 ## Exploring an FDB you don't know
 

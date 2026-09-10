@@ -29,6 +29,9 @@ xdggs = "*"
 
 [feature.explore.tasks]
 lab = "jupyter lab --no-browser --ip=127.0.0.1"
+# Register a Jupyter kernel that launches through `pixi run`, so VSCode gets an
+# activated environment (FDB5_DIR/LD_LIBRARY_PATH) instead of a bare interpreter.
+kernel = "python tools/make_kernel.py"
 ipython = "ipython"
 quickstart = "jupyter nbconvert --to notebook --execute --inplace examples/quickstart.ipynb"
 
