@@ -7,6 +7,35 @@ platforms = ["linux-64", "osx-arm64"]
 test = "pytest -q"
 scan = "python -m destine_fdb.cli scan"
 
+# An environment for looking at data rather than developing the package:
+# `pixi run -e explore lab` and start a notebook. Kept as a separate feature so
+# the default environment stays small enough to install on a login node in
+# seconds, and so a workflow that only needs the reader does not drag in
+# cartopy.
+[feature.explore.dependencies]
+ipython = "*"
+jupyterlab = "*"
+ipykernel = "*"
+matplotlib-base = "*"
+cartopy = "*"
+healpy = "*"
+netcdf4 = "*"
+zarr = "*"
+cftime = "*"
+
+[feature.explore.pypi-dependencies]
+easygems = "*"
+xdggs = "*"
+
+[feature.explore.tasks]
+lab = "jupyter lab --no-browser --ip=127.0.0.1"
+ipython = "ipython"
+quickstart = "jupyter nbconvert --to notebook --execute --inplace examples/quickstart.ipynb"
+
+[environments]
+default = { solve-group = "main" }
+explore = { features = ["explore"], solve-group = "main" }
+
 [dependencies]
 python = ">=3.11,<3.13"
 earthkit-data = ">=0.20"
