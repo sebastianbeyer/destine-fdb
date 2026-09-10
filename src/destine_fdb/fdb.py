@@ -105,6 +105,95 @@ def _handle():
     return pyfdb.FDB()
 
 
+def _elements(request, depth):
+    """Yield raw pyfdb list elements, or nothing on the legacy dict API.
+
+    Only the 5.21-style objects carry ``data_handle``/``length``, which is what
+    reading and Nside measurement need. Callers that only want keys use
+    ``_list`` instead, which works on both APIs.
+    """
+    fdb = _handle()
+    import inspect
+
+    try:
+        params = inspect.signature(fdb.list).parameters
+    except (TypeError, ValueError):  # pragma: no cover - defensive
+        return
+
+    if "level" not in params:
+        return
+    yield from fdb.list(_alternatives(request or {}), level=depth)
+
+
+def _alternatives(request):
+    """Split MARS ``a/b/c`` alternatives into lists.
+
+    ``list()`` matches values literally, so a joined string finds nothing;
+    request builders elsewhere use the MARS spelling.
+    """
+    return {k: (v.split("/") if isinstance(v, str) and "/" in v else v)
+            for k, v in request.items()}
+
+
+def _member(obj, name):
+    """pyfdb 5.21 exposes these as methods; other builds as plain attributes."""
+    value = getattr(obj, name)
+    return value() if callable(value) else value
+
+
+def _grib_data_points(head):
+    """Number of data points from a GRIB2 header, without decoding the field.
+
+    Section 3 octets 7-10 hold the point count, and section 3 sits a few
+    hundred bytes into the message -- so this needs the head of the message,
+    not the field. For HEALPix that count is 12*Nside^2, which is the only
+    honest way to know the grid: `resolution` is a MARS key whose meaning
+    (`high` -> H512 or H1024) depends on the model resolution behind the run.
+    """
+    import struct
+
+    if head[:4] != b"GRIB":
+        return None
+    if head[7] != 2:                             # GRIB1 puts the grid elsewhere
+        return None
+    pos = 16                                     # section 0 is fixed-length
+    while pos + 10 <= len(head):
+        seclen, secnum = struct.unpack(">IB", head[pos:pos + 5])
+        if secnum == 3:
+            return struct.unpack(">I", head[pos + 6:pos + 10])[0]
+        if seclen <= 0:
+            return None
+        pos += seclen
+    return None
+
+
+def measure_nside(request, head_bytes=512):
+    """Exact HEALPix Nside for a run, read from one GRIB header.
+
+    Costs one lazy listing plus a few hundred bytes -- no field is retrieved.
+    Returns None when the FDB holds nothing for the request, or when pyfdb is
+    too old to hand out a data handle.
+    """
+    for element in _elements(request, depth=3):
+        try:
+            handle = _member(element, "data_handle")
+            if callable(getattr(handle, "open", None)):
+                handle.open()
+            try:
+                head = handle.read(head_bytes)
+            finally:
+                if callable(getattr(handle, "close", None)):
+                    handle.close()
+        except Exception:                        # noqa: BLE001 - best effort
+            return None
+        points = _grib_data_points(head)
+        if not points or points % 12:
+            return None
+        nside = int(round((points // 12) ** 0.5))
+        return nside if 12 * nside * nside == points else None
+    return None
+
+
 def _list(request, depth, expand=True):
     """Yield the MARS key dict of every FDB entry matching ``request``.
 

@@ -696,26 +696,6 @@ def is_3d(spec):
     return "level" in spec["dims"]
 
 
-# HEALPix Nside per (activity, resolution). A property of the simulation that a
-# request cannot ask for: story-nudging tops out at H512, free runs at H1024.
-NSIDE = {
-    "story-nudging": {"standard": 128, "high": 512},
-    None: {"standard": 128, "high": 1024},
-}
-
-
-def nside_for(activity, resolution):
-    """HEALPix Nside for an (activity, resolution) pair."""
-    table = NSIDE.get(activity, NSIDE[None])
-    try:
-        return table[resolution]
-    except KeyError:
-        raise KeyError(
-            f"No Nside known for activity={activity!r} resolution={resolution!r}. "
-            f"Pass nside= explicitly."
-        ) from None
-
-
 def npix(nside):
     """Number of HEALPix cells for a given Nside."""
     return 12 * nside * nside

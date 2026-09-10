@@ -125,7 +125,30 @@ def scan_run(fdb=None, *, activity="story-nudging", experiment="hist",
 DB_SPANS = {"clte": "day", "clmn": "year"}
 
 
-def runs(fdb=None, *, fdb_home=None):
+def _measure_run_nside(row):
+    """Nside for one row of ``runs()``, per resolution present.
+
+    A run can hold more than one resolution and they do not share a grid, so
+    report each one ("standard:128 high:512") rather than picking a winner.
+    """
+    request = {k: v for k, v in row.items()
+               if k in ("class", "dataset", "activity", "experiment", "model",
+                        "realization", "generation", "expver", "stream")}
+    request["year" if row.get("stream") == "clmn" else "date"] = row["first"]
+
+    found = {}
+    for resolution in sorted(_fdb._values(request, 2, "resolution")):
+        nside = _fdb.measure_nside({**request, "resolution": resolution})
+        if nside:
+            found[resolution] = nside
+    if not found:
+        return None
+    if len(found) == 1:
+        return next(iter(found.values()))
+    return " ".join(f"{res}:{nside}" for res, nside in sorted(found.items()))
+
+
+def runs(fdb=None, *, fdb_home=None, check_nside=False):
     """Every run an FDB contains, as a DataFrame. The first question to ask.
 
     Reads database directory names, so it costs one listing per root rather
@@ -138,6 +161,12 @@ def runs(fdb=None, *, fdb_home=None):
     and daily streams (``clte``, keyed on ``date``) and **one year** for the
     monthly stream (``clmn``, keyed on ``year``). The ``covers`` column says
     that in words, and ``first``/``last`` give the actual range.
+
+    ``check_nside=True`` adds an ``nside`` column, measured from one GRIB header
+    per run and resolution. It is off by default because it is the only part of
+    this function that talks to the FDB rather than the filesystem: a few
+    hundred milliseconds per run, which on a shared FDB with hundreds of runs
+    is minutes rather than the usual hundredth of a second.
     """
     import pandas as pd
 
@@ -159,10 +188,14 @@ def runs(fdb=None, *, fdb_home=None):
     if not rows:
         raise LookupError(f"No FDB databases under {', '.join(map(str, roots))}.")
 
+    if check_nside:
+        for row in rows:
+            row["nside"] = _measure_run_nside(row)
+
     frame = pd.DataFrame(rows)
     order = ["activity", "experiment", "model", "realization", "stream",
              "generation", "expver", "class", "dataset", "covers", "databases",
-             "first", "last"]
+             "first", "last", "nside"]
     frame = frame[[c for c in order if c in frame]]
     return frame.sort_values(["activity", "experiment", "model", "realization",
                               "stream"]).reset_index(drop=True)
@@ -403,7 +436,18 @@ def open_run(fdb=None, *, activity="story-nudging", experiment="hist",
         )
 
     # ── coordinates ─────────────────────────────────────────────────────
-    nside = nside or _portfolio.nside_for(activity, resolution)
+    # Measured, not inferred: `resolution` is a MARS key whose meaning depends
+    # on the model resolution behind the run (`high` is H512 for one run and
+    # H1024 for another), so the only reliable answer is the one in the data.
+    # Costs one lazy listing and a few hundred bytes -- no field is read.
+    if not nside:
+        nside = _fdb.measure_nside(request)
+    if not nside:
+        raise LookupError(
+            "Could not read the run's HEALPix Nside from the FDB. Nothing "
+            "matched the request, or this pyfdb is too old to hand out a data "
+            "handle. Pass nside= explicitly if you know it."
+        )
     coords = {"time": times, "cell": range(_portfolio.npix(nside))}
 
     needs_level = any("level" in v["dims"] for v in selected.values())

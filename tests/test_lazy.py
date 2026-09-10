@@ -159,6 +159,9 @@ def test_wrong_cell_count_is_a_loud_error():
 @pytest.fixture
 def configured(monkeypatch):
     monkeypatch.setenv("FDB5_CONFIG", "type: local")
+    # open_run measures Nside from a GRIB header in the FDB, so that seam needs
+    # faking too. Most stubs here are H128; the ones that are not patch it again.
+    monkeypatch.setattr(fdbmod, "measure_nside", lambda request, **kw: 128)
 
 
 def test_open_run_is_lazy_until_values_are_touched(configured):
@@ -216,13 +219,37 @@ def test_plus2k_alias_maps_to_the_mars_key(configured):
     assert ds.attrs["experiment"] == "tplus2.0k"
 
 
-def test_high_resolution_storyline_is_h512(configured):
+def test_the_measured_nside_builds_the_grid(configured, monkeypatch):
+    monkeypatch.setattr(fdbmod, "measure_nside", lambda request, **kw: 512)
     stub = StubFDB(n_cells=12 * 512 * 512)
     ds = destine_fdb.open_run(
         frequency="monthly", resolution="high", start="2017-01-01",
         end="2017-01-01", scan=False, variables=["avg_2t"], fetcher=stub)
     assert ds.sizes["cell"] == 12 * 512 * 512
     assert ds.attrs["grid"] == "H512"
+
+
+def test_resolution_high_does_not_imply_one_nside(configured, monkeypatch):
+    """`high` is H512 behind one model resolution and H1024 behind another.
+
+    The old (activity, resolution) lookup table could only ever be right for
+    the runs it knew about; a measurement cannot be wrong.
+    """
+    monkeypatch.setattr(fdbmod, "measure_nside", lambda request, **kw: 1024)
+    ds = destine_fdb.open_run(
+        frequency="monthly", resolution="high", start="2017-01-01",
+        end="2017-01-01", scan=False, variables=["avg_2t"],
+        fetcher=StubFDB(n_cells=12 * 1024 * 1024))
+    assert ds.attrs["grid"] == "H1024"
+
+
+def test_an_unreadable_nside_is_an_error_not_a_guess(configured, monkeypatch):
+    monkeypatch.setattr(fdbmod, "measure_nside", lambda request, **kw: None)
+    with pytest.raises(LookupError, match="Nside"):
+        destine_fdb.open_run(
+            frequency="monthly", resolution="high", start="2017-01-01",
+            end="2017-01-01", scan=False, variables=["avg_2t"],
+            fetcher=StubFDB(n_cells=12 * 512 * 512))
 
 
 # ── portfolio narrowing from the scan ───────────────────────────────────
@@ -378,8 +405,9 @@ def test_a_range_still_narrows_the_variable_list(configured, monkeypatch):
 
 # ── HEALPix grid metadata ───────────────────────────────────────────────
 
-def test_cell_coord_carries_xdggs_grid_metadata(configured):
+def test_cell_coord_carries_xdggs_grid_metadata(configured, monkeypatch):
     """Emitting the standard attrs is what lets ds.dggs.decode() work."""
+    monkeypatch.setattr(fdbmod, "measure_nside", lambda request, **kw: 512)
     ds = destine_fdb.open_run(
         frequency="monthly", resolution="high", start="2017-01-01",
         end="2017-01-01", scan=False, variables=["avg_2t"],

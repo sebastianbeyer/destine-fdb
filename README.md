@@ -86,6 +86,42 @@ Without it every request fails to find a schema, with an error that never
 mentions `FDB_HOME`. Passing a config file directly also works; then set
 `fdb_home=` yourself if the config uses `~fdb` paths.
 
+## Nside is measured, not assumed
+
+`resolution` is a MARS key with two values, `standard` and `high` — but what
+they mean depends on the model resolution behind the run. `high` is H512 for a
+tco1279 run and H1024 for a tco2559 one, and the FDB keys never say which.
+
+So the grid is read from the data: one lazy listing, then a few hundred bytes
+of the first field's GRIB header, where section 3 carries the point count —
+`12 * Nside²` for HEALPix. No field is retrieved, and there is no lookup table
+to be wrong.
+
+`runs()` leaves this off by default, because it is the one thing there that
+would talk to the FDB rather than the filesystem:
+
+```python
+destine_fdb.runs(FDB, check_nside=True)     # adds an `nside` column
+```
+
+A few hundred milliseconds per run is nothing for one run and minutes for the
+828 in the shared DestinE FDB. Runs holding more than one resolution report
+each ("standard:128 high:512"), since those do not share a grid.
+
+## Reading goes through the listing, not `retrieve()`
+
+Fields are read by listing the request and pulling each element's own data
+handle, rather than through earthkit's `"fdb"` source. That source calls
+pyfdb's `retrieve()`, which returns an **empty stream** against the shared
+DestinE FDB on MN5 — while `fdb read` on the command line and the listing path
+both return the field, from the same libfdb, config, schema and data. Not the
+`select` config (a plain single-root `type: local` config on the same data
+behaves identically), not masked duplicates, not key spelling, not permissions.
+
+Reading what the listing already points at sidesteps it, and is the faster
+path anyway: the bytes go straight to memory instead of being staged through a
+temp file on scratch. Pass `fetcher=` to `open_run` to override it.
+
 ## Requirements
 
 `pyfdb` must find the `libfdb5.so` that matches your FDB. The listing API

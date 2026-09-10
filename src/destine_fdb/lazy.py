@@ -147,7 +147,7 @@ def build_dataset(base_request, times, variables, stream, freq, nside,
     import dask.array as da
     import xarray as xr
 
-    fetcher = fetcher or _earthkit_fdb_fetch
+    fetcher = fetcher or _fdb_fetch
     times = pd.DatetimeIndex(times)
     n_cells = 12 * nside * nside
     default_chunk = {"clmn": 12}.get(stream, 24 if freq == "h" else 30)
@@ -197,8 +197,47 @@ def build_dataset(base_request, times, variables, stream, freq, nside,
     return xr.Dataset(data_vars, coords=coords)
 
 
-def _earthkit_fdb_fetch(request):
+def _fdb_fetch(request):
+    """Read a block by listing it and reading each field's own data handle.
+
+    Deliberately not earthkit's ``"fdb"`` source, which goes through pyfdb's
+    ``retrieve()``. Against the shared DestinE FDB on MN5 that returns an empty
+    stream, while ``fdb read`` on the command line and this path both return the
+    field -- same libfdb, same config, same data. Listing is also the cheaper
+    route: it hands back bytes, where the earthkit source stages every request
+    through a temp file on scratch first.
+
+    Reading through ``data_handle`` rather than the element's path and offset
+    keeps remote and gateway roots working, since libfdb resolves the location.
+    """
     import earthkit.data
-    # stream=False is mandatory: earthkit-data's default streaming path reads the
-    # pyfdb DataHandle without opening it first, which is broken against pyfdb 5.x.
+
+    from . import fdb as _fdb
+
+    chunks = []
+    for element in _fdb._elements(request, depth=3):
+        handle = _fdb._member(element, "data_handle")
+        if callable(getattr(handle, "open", None)):
+            handle.open()
+        try:
+            chunks.append(handle.readall())
+        finally:
+            if callable(getattr(handle, "close", None)):
+                handle.close()
+
+    if not chunks:
+        # Let the caller report it the same way as any other empty response.
+        return earthkit.data.from_source("empty")
+    return earthkit.data.from_source("memory", b"".join(chunks))
+
+
+def _earthkit_fdb_fetch(request):
+    """The earthkit ``"fdb"`` source, kept as an escape hatch for ``fetcher=``.
+
+    stream=False is mandatory here: earthkit-data's default streaming path reads
+    the pyfdb DataHandle without opening it first, which is broken against
+    pyfdb 5.x.
+    """
+    import earthkit.data
+
     return earthkit.data.from_source("fdb", request, stream=False)
