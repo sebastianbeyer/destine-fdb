@@ -250,7 +250,10 @@ def test_scan_builds_the_hourly_time_axis(configured, monkeypatch):
     ds = destine_fdb.open_run(frequency="hourly", levtype="sfc",
                               fetcher=StubFDB(n_cells=12 * 128 * 128))
     assert ds.sizes["time"] == 4
-    assert str(ds.time.values[-1]) == "2017-01-01T03:00:00.000000000"
+    # Compare instants, not their repr: datetime64 resolution is ns under
+    # pandas 2 and us under pandas 3, so the string form differs by platform
+    # while the value does not.
+    assert pd.Timestamp(ds.time.values[-1]) == pd.Timestamp("2017-01-01 03:00")
 
 
 def test_a_run_with_none_of_the_portfolio_says_so(configured, monkeypatch):
