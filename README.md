@@ -104,9 +104,33 @@ would talk to the FDB rather than the filesystem:
 destine_fdb.runs(FDB, check_nside=True)     # adds an `nside` column
 ```
 
-A few hundred milliseconds per run is nothing for one run and minutes for the
-828 in the shared DestinE FDB. Runs holding more than one resolution report
-each ("standard:128 high:512"), since those do not share a grid.
+Measured on the shared DestinE FDB: **0.28s plain, 728.8s with
+`check_nside=True`** across 828 runs (0.88s each -- a level-2 listing plus one
+header read per resolution present). Runs holding more than one resolution
+report each ("standard:128 high:512"), since those do not share a grid.
+
+What that survey found is the argument for measuring at all:
+
+```
+nside
+32                        627     <- tco79 test runs
+standard:128 high:512     121
+standard:128 high:1024     23     <- same `high` key, different grid
+128                        23
+None                       16     <- unmeasurable, see below
+512                        10
+1024                        8
+```
+
+`high` is H512 in 121 runs and H1024 in 23 others, and 627 runs are H32 --
+which a table keyed on (activity, resolution) would have called H128.
+
+The 16 unmeasurable rows are junk somebody archived into the shared FDB
+(`class=sbeyercopy_d1`, `class=_d1`) that metkit refuses to expand. Each row's
+measurement is caught on its own, so those report no Nside instead of taking
+the other 812 down with them. eckit prints its complaint on its own stderr,
+below Python -- redirect the process's stderr if the noise bothers you; the
+library cannot swallow it without also hiding real errors.
 
 ## Reading goes through the listing, not `retrieve()`
 

@@ -136,16 +136,31 @@ def _measure_run_nside(row):
                         "realization", "generation", "expver", "stream")}
     request["year" if row.get("stream") == "clmn" else "date"] = row["first"]
 
+    # A shared FDB holds runs nobody sane archived: `class=sbeyercopy_d1` is in
+    # the DestinE one, and metkit refuses to expand it. That is one row's
+    # problem, not the caller's -- an unmeasurable run reports no Nside while
+    # every other row still gets one.
+    try:
+        resolutions = sorted(_fdb._values(request, 2, "resolution"))
+    except Exception:                            # noqa: BLE001 - per-row, reported as None
+        return None
+
     found = {}
-    for resolution in sorted(_fdb._values(request, 2, "resolution")):
-        nside = _fdb.measure_nside({**request, "resolution": resolution})
+    for resolution in resolutions:
+        try:
+            nside = _fdb.measure_nside({**request, "resolution": resolution})
+        except Exception:                        # noqa: BLE001 - as above
+            continue
         if nside:
             found[resolution] = nside
     if not found:
         return None
     if len(found) == 1:
         return next(iter(found.values()))
-    return " ".join(f"{res}:{nside}" for res, nside in sorted(found.items()))
+    # Coarsest first: "standard:128 high:512" is the order people think in,
+    # where sorting by resolution name would put high before standard.
+    return " ".join(f"{res}:{nside}" for res, nside
+                    in sorted(found.items(), key=lambda kv: kv[1]))
 
 
 def runs(fdb=None, *, fdb_home=None, check_nside=False):

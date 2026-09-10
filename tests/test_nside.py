@@ -87,3 +87,36 @@ def test_a_point_count_that_is_not_healpix_is_declined(monkeypatch):
 
     monkeypatch.setattr(fdbmod, "_elements", lambda request, depth: iter([Element()]))
     assert fdbmod.measure_nside({}) is None
+
+
+def test_one_unlistable_run_does_not_sink_the_whole_table(monkeypatch):
+    """The shared DestinE FDB holds a `class=sbeyercopy_d1` run metkit rejects.
+
+    That used to raise out of runs(check_nside=True), losing 800-odd good rows
+    to one bad one.
+    """
+    import destine_fdb
+
+    def explode(request, level, key):
+        raise RuntimeError("UserError: TypeEnum[name=class]: cannot expand "
+                           "'sbeyercopy_d1'")
+
+    monkeypatch.setattr(fdbmod, "_values", explode)
+    assert destine_fdb._measure_run_nside(
+        {"class": "sbeyercopy_d1", "stream": "clmn", "first": "2026"}) is None
+
+
+def test_a_resolution_that_cannot_be_measured_is_skipped_not_fatal(monkeypatch):
+    import destine_fdb
+
+    monkeypatch.setattr(fdbmod, "_values",
+                        lambda request, level, key: {"standard", "high"})
+
+    def measure(request, **kw):
+        if request["resolution"] == "high":
+            raise RuntimeError("boom")
+        return 128
+
+    monkeypatch.setattr(fdbmod, "measure_nside", measure)
+    assert destine_fdb._measure_run_nside(
+        {"stream": "clte", "first": "20260501"}) == 128
