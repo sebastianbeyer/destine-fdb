@@ -207,6 +207,8 @@ def overview(fdb=None, *, activity="story-nudging", experiment="hist",
              scan_mode="auto", tier="full", **overrides):
     """What one run holds, across *every* levtype, as a DataFrame.
 
+    ``frame.attrs["nside"]`` carries the run's measured HEALPix Nside.
+
     ``open_run`` opens one levtype at a time, so on an unfamiliar run this
     answers the question that comes first: which families of fields are there,
     how far do they go, and how many levels do they have.
@@ -228,6 +230,7 @@ def overview(fdb=None, *, activity="story-nudging", experiment="hist",
     catalogue = portfolio or _default_portfolio(activity, stream, None, tier)
 
     rows = []
+    measured, measured_done = None, False
     for levtype, spec in catalogue.items():
         request = _base_request(activity, experiment, member, model, resolution,
                                 levtype, stream, overrides)
@@ -235,6 +238,18 @@ def overview(fdb=None, *, activity="story-nudging", experiment="hist",
             found = _fdb.scan(request, stream, mode=scan_mode)
         except LookupError:
             continue                      # nothing archived for this levtype
+        if not measured_done:
+            # Once per run, not once per levtype: 0.2s against the ~10s this
+            # call already costs, and every levtype of a run has answered with
+            # the same grid so far. `resolution` alone cannot tell you this --
+            # `standard` is H128 for a tco1279 run and H32 for a tco79 one.
+            # Reported, never fatal: an overview is still worth printing
+            # without it, unlike open_run, which cannot build a grid without.
+            measured_done = True
+            try:
+                measured = _fdb.measure_nside(request)
+            except Exception:                    # noqa: BLE001 - informational
+                measured = None
         times = found["times"]
         archived = {name for name in spec["variables"]
                     if not found["params"] or to_param_id(name) in found["params"]}
@@ -257,7 +272,11 @@ def overview(fdb=None, *, activity="story-nudging", experiment="hist",
             f"Nothing archived for activity={activity!r} experiment={experiment!r} "
             f"member={member} at resolution={resolution!r}, in any levtype."
         )
-    return pd.DataFrame(rows)
+    frame = pd.DataFrame(rows)
+    # An attr rather than a column: it describes the run, and repeating one
+    # value down six rows reads like it might vary.
+    frame.attrs["nside"] = measured
+    return frame
 
 
 def open_run(fdb=None, *, activity="story-nudging", experiment="hist",

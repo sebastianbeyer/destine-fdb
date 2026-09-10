@@ -91,6 +91,8 @@ def main(argv=None):
         except Exception as exc:                 # noqa: BLE001 - a CLI
             print(f"overview failed: {exc}", file=sys.stderr)
             return 2
+        if frame.attrs.get("nside"):
+            print(f"grid      : H{frame.attrs['nside']}")
         _show(frame, ["levtype", "freq", "variables", "timesteps", "first",
                       "last", "levels"])
         if args.names:
